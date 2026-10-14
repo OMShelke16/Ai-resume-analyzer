@@ -10,6 +10,7 @@ def get_recommendations():
     """
     Ranks dataset jobs against candidate resume text or resume_id using hybrid TF-IDF + Skill overlap.
     Supports multi-criteria filtering: search, job_type, location, experience, category, skill.
+    Supports model_type toggle: 'hybrid_tfidf' (paper default) or 'semantic_lsa' (dense embedding alternative).
     """
     data = request.get_json() or {}
     resume_text = data.get("resume_text", "")
@@ -21,6 +22,7 @@ def get_recommendations():
     category = data.get("category", None)
     skill = data.get("skill", None)
     search = data.get("search", None)
+    use_dense_lsa = bool(data.get("use_dense_lsa", False) or data.get("model_type") == "semantic_lsa")
 
     if resume_id and not resume_text:
         res = Resume.query.get(resume_id)
@@ -42,12 +44,14 @@ def get_recommendations():
         experience_filter=experience,
         category_filter=category,
         skill_filter=skill,
-        search_filter=search
+        search_filter=search,
+        use_dense_lsa=use_dense_lsa
     )
 
     return jsonify({
         "success": True,
         "count": len(recommendations),
         "candidate_skills": flat_skills,
+        "model_used": "Dense LSA Semantic Hybrid" if use_dense_lsa else "Classical TF-IDF Hybrid (Paper Proposed)",
         "recommendations": recommendations
     })

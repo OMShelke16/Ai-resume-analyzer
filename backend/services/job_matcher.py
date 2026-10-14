@@ -10,7 +10,8 @@ class JobMatcher:
         resume_skills: List[str],
         job_title: str,
         job_description: str,
-        job_required_skills: List[str] = None
+        job_required_skills: List[str] = None,
+        use_dense_lsa: bool = False
     ) -> Dict[str, Any]:
         """
         Performs AI matching between a candidate's resume and a specific job posting.
@@ -30,13 +31,14 @@ class JobMatcher:
         matched_skills = skill_comparison["matched_skills"]
         missing_skills = skill_comparison["missing_skills"]
 
-        # Compute hybrid similarity & cosine similarity
+        # Compute hybrid similarity & cosine similarity (classical TF-IDF or dense LSA)
         full_job_text = f"{job_title}\n{job_description}\n{' '.join(job_required_skills)}"
         overall_score, cosine_pct, skill_pct = similarity_calculator.compute_hybrid_match(
             resume_text=resume_text,
             job_text=full_job_text,
             resume_skills=resume_skills,
-            job_skills=job_required_skills
+            job_skills=job_required_skills,
+            use_dense_lsa=use_dense_lsa
         )
 
         # Extract top keywords from job description

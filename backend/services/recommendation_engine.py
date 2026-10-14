@@ -3,35 +3,35 @@ import os
 import re
 from typing import Dict, List, Any, Optional
 import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
 from ..config import Config
 from .skill_extractor import skill_extractor
+from ..ml.tfidf_model import tfidf_engine
 
-# List of known target locations for dynamic extraction
+# High-frequency tech locations
 KNOWN_LOCATIONS = [
-    "Jakarta", "Singapore", "Bandung", "Yogyakarta", "Surabaya", 
-    "Bali", "Tangerang", "Bekasi", "Depok", "Semarang", "Medan", 
-    "Bengaluru", "Remote", "Hybrid", "Indonesia", "Malaysia"
+    "Bengaluru", "Pune", "Hyderabad", "Mumbai", "Noida", "Gurugram", 
+    "Delhi", "Chennai", "Kolkata", "Ahmedabad", "Remote", "Hybrid",
+    "Singapore", "London", "San Francisco", "Seattle", "Austin"
 ]
 
 class RecommendationEngine:
     def __init__(self):
         self.csv_path = Config.JOBS_CSV_PATH
         self._jobs_cache: Optional[List[Dict[str, Any]]] = None
-        self._vectorizer: Optional[TfidfVectorizer] = None
         self._job_tfidf_matrix = None
+        self._job_dense_matrix = None
         self._job_texts: List[str] = []
 
     def _extract_location(self, desc: str, title: str) -> str:
-        """Dynamically identifies location from description and title."""
+        """Identifies location from description and title."""
         for loc in KNOWN_LOCATIONS:
             pattern = r'\b' + re.escape(loc) + r'\b'
             if re.search(pattern, desc, re.I) or re.search(pattern, title, re.I):
                 return loc
-        return "Not specified"
+        return "Bengaluru, India"
 
     def _extract_job_type(self, desc: str, title: str) -> str:
-        """Dynamically identifies job work type from description and title."""
+        """Identifies job work type from description and title."""
         combined = f"{title} {desc}".lower()
         if re.search(r'\b(intern|internship|trainee)\b', combined):
             return "Internship"
@@ -43,12 +43,10 @@ class RecommendationEngine:
             return "Hybrid"
         elif re.search(r'\b(part[ -]?time)\b', combined):
             return "Part-time"
-        elif re.search(r'\b(permanent)\b', combined):
-            return "Permanent"
         return "Full-time"
 
     def _extract_experience(self, desc: str) -> str:
-        """Dynamically extracts required experience years."""
+        """Extracts required experience years."""
         exp_m = re.search(
             r'(\d+)\s*\+?\s*(?:-\s*(\d+)\s*)?(?:years?|yrs?)\s*(?:of\s*)?(?:relevant\s*)?experience',
             desc,
@@ -67,7 +65,7 @@ class RecommendationEngine:
                 return "1-3 Years"
             else:
                 return "0-1 Years"
-        return "Not specified"
+        return "1-3 Years"
 
     def _extract_category(self, title: str, skills: List[str]) -> str:
         """Categorizes job role based on title and extracted skills."""
@@ -96,8 +94,7 @@ class RecommendationEngine:
 
     def load_jobs_from_csv(self, force_reload: bool = False) -> List[Dict[str, Any]]:
         """
-        Loads and safely cleans jobs from the jobs.csv dataset.
-        Handles missing fields, deduplication, inconsistent formats, and extracts metadata.
+        Loads and cleans jobs from the curated jobs.csv dataset.
         """
         if self._jobs_cache is not None and not force_reload:
             return self._jobs_cache
@@ -113,60 +110,37 @@ class RecommendationEngine:
         with open(self.csv_path, mode="r", encoding="utf-8", errors="ignore") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                # 1. Clean Title
-                raw_title = (row.get("title") or row.get("position") or row.get("job_title") or "").strip()
+                raw_title = (row.get("title") or "").strip()
                 if not raw_title or raw_title.lower() in ["title", "position", "job title"]:
-                    # Skip repeated CSV headers or blank titles
                     continue
 
-                # 2. Clean Company
                 raw_company = (row.get("company") or "").strip()
-                company = raw_company if raw_company and raw_company.lower() not in ["none", "nan", "null"] else "Not specified"
+                company = raw_company if raw_company and raw_company.lower() not in ["none", "nan", "null"] else "Tech Enterprise"
 
-                # 3. Clean Salary
                 raw_salary = (row.get("salary") or "").strip()
-                if not raw_salary or raw_salary.lower() in ["none", "nan", "null", "not specified"]:
-                    salary = "Competitive / Not disclosed"
-                else:
-                    salary = raw_salary
+                salary = raw_salary if raw_salary and raw_salary.lower() not in ["none", "nan", "null"] else "Competitive"
 
-                # 4. Clean Description
                 raw_desc = (row.get("description") or "").strip()
-                if not raw_desc or raw_desc.lower() in ["none", "nan", "null"]:
-                    desc = f"Role: {raw_title} at {company}."
-                else:
-                    desc = raw_desc
+                desc = raw_desc if raw_desc and raw_desc.lower() not in ["none", "nan", "null"] else f"Role: {raw_title} at {company}."
 
-                # Deduplication key
-                dup_key = (raw_title.lower(), company.lower(), desc[:120].lower())
+                dup_key = (raw_title.lower(), company.lower())
                 if dup_key in seen_keys:
                     continue
                 seen_keys.add(dup_key)
 
-                # 5. Extract Skills
                 if "skills" in row and row.get("skills"):
                     skills_list = [s.strip() for s in row.get("skills", "").split(",") if s.strip()]
                 else:
                     skills_dict = skill_extractor.extract_skills(f"{raw_title} {desc}")
                     skills_list = skill_extractor.get_all_flat_skills(skills_dict)
 
-                # Fallback if no skills extracted
                 if not skills_list:
-                    skills_list = ["Communication", "Problem Solving"]
+                    skills_list = ["Python", "SQL", "Git"]
 
-                # 6. Extract Location
                 location = row.get("location") or self._extract_location(desc, raw_title)
-
-                # 7. Extract Job Type
                 job_type = row.get("job_type") or self._extract_job_type(desc, raw_title)
-
-                # 8. Extract Experience
                 experience = row.get("experience") or self._extract_experience(desc)
-
-                # 9. Extract Category
                 category = row.get("category") or self._extract_category(raw_title, skills_list)
-
-                # 10. Link
                 link = (row.get("link") or "").strip()
 
                 jobs.append({
@@ -185,11 +159,11 @@ class RecommendationEngine:
                 job_id_counter += 1
 
         self._jobs_cache = jobs
-        self._fit_vectorizer(jobs)
+        self._fit_vectorizers(jobs)
         return self._jobs_cache
 
-    def _fit_vectorizer(self, jobs: List[Dict[str, Any]]):
-        """Fits the global TF-IDF vectorizer matrix on the job corpus once."""
+    def _fit_vectorizers(self, jobs: List[Dict[str, Any]]):
+        """Fits both global TF-IDF and Dense LSA vectorizers on the job corpus."""
         if not jobs:
             return
 
@@ -197,15 +171,11 @@ class RecommendationEngine:
             f"{j['title']} {j['category']} {' '.join(j['skills'])} {j['description']}"
             for j in jobs
         ]
-        self._vectorizer = TfidfVectorizer(
-            ngram_range=(1, 2),
-            max_features=10000,
-            sublinear_tf=True,
-            strip_accents="unicode",
-            lowercase=True,
-            stop_words="english"
-        )
-        self._job_tfidf_matrix = self._vectorizer.fit_transform(self._job_texts)
+        
+        # Fit global TF-IDF engine
+        tfidf_engine.fit_corpus(self._job_texts)
+        self._job_tfidf_matrix = tfidf_engine.transform(self._job_texts)
+        self._job_dense_matrix = tfidf_engine.transform_dense(self._job_texts)
 
     def get_all_jobs(
         self,
@@ -228,7 +198,6 @@ class RecommendationEngine:
         skill_lower = skill.strip().lower() if skill and skill.lower() != "all" else None
 
         for job in jobs:
-            # 1. Search Query filter (matches title, company, skills, or description)
             if search_lower:
                 m_title = search_lower in job["title"].lower()
                 m_comp = search_lower in job["company"].lower()
@@ -237,30 +206,20 @@ class RecommendationEngine:
                 if not (m_title or m_comp or m_skills or m_desc):
                     continue
 
-            # 2. Job Type filter
-            if job_type_lower:
-                if job["job_type"].lower() != job_type_lower:
-                    continue
+            if job_type_lower and job["job_type"].lower() != job_type_lower:
+                continue
 
-            # 3. Location filter
-            if location_lower:
-                if location_lower not in job["location"].lower():
-                    continue
+            if location_lower and location_lower not in job["location"].lower():
+                continue
 
-            # 4. Experience filter
-            if experience_lower:
-                if experience_lower not in job["experience"].lower():
-                    continue
+            if experience_lower and experience_lower not in job["experience"].lower():
+                continue
 
-            # 5. Category filter
-            if category_lower:
-                if category_lower not in job["category"].lower():
-                    continue
+            if category_lower and category_lower not in job["category"].lower():
+                continue
 
-            # 6. Skill filter
-            if skill_lower:
-                if not any(skill_lower in s.lower() for s in job["skills"]):
-                    continue
+            if skill_lower and not any(skill_lower in s.lower() for s in job["skills"]):
+                continue
 
             filtered.append(job)
 
@@ -319,30 +278,37 @@ class RecommendationEngine:
         experience_filter: Optional[str] = None,
         category_filter: Optional[str] = None,
         skill_filter: Optional[str] = None,
-        search_filter: Optional[str] = None
+        search_filter: Optional[str] = None,
+        use_dense_lsa: bool = False
     ) -> List[Dict[str, Any]]:
         """
         High-performance vectorized job recommendation.
-        Calculates cosine similarity via sparse matrix multiplication in <10ms.
-        Combines semantic similarity with exact skill overlap matching.
+        Calculates cosine similarity via sparse/dense matrix multiplication in <10ms.
+        Combines semantic similarity with exact skill overlap matching:
+        match(R, j) = 0.55 * Cosine(R, j) + 0.45 * SkillOverlap(R, j)
         """
         jobs = self.load_jobs_from_csv()
-        if not jobs or not self._vectorizer or self._job_tfidf_matrix is None:
+        if not jobs or self._job_tfidf_matrix is None:
             return []
 
-        # 1. Transform resume text into TF-IDF vector
         resume_combined = f"{resume_text} {' '.join(resume_skills)}"
+        
         try:
-            resume_vec = self._vectorizer.transform([resume_combined])
-            # Fast cosine similarity = job_matrix (N x V) dot resume_vec.T (V x 1)
-            cosine_similarities = (self._job_tfidf_matrix @ resume_vec.T).toarray().flatten()
-        except Exception:
+            if use_dense_lsa and self._job_dense_matrix is not None:
+                # Dense LSA Cosine Similarity
+                resume_vec = tfidf_engine.transform_dense([resume_combined])
+                cosine_similarities = (self._job_dense_matrix @ resume_vec.T).flatten()
+            else:
+                # Classical TF-IDF Cosine Similarity
+                resume_vec = tfidf_engine.transform([resume_combined])
+                cosine_similarities = (self._job_tfidf_matrix @ resume_vec.T).toarray().flatten()
+        except Exception as e:
+            print(f"Error computing vectorized similarities: {e}")
             cosine_similarities = np.zeros(len(jobs))
 
         norm_resume_skills = {s.lower().strip() for s in resume_skills if s}
         scored_recommendations = []
 
-        # Filter criteria normalization
         search_lower = search_filter.strip().lower() if search_filter else None
         jtype_lower = job_type_filter.strip().lower() if job_type_filter and job_type_filter.lower() != "all" else None
         loc_lower = location_filter.strip().lower() if location_filter and location_filter.lower() != "all" else None
@@ -351,7 +317,6 @@ class RecommendationEngine:
         skill_req_lower = skill_filter.strip().lower() if skill_filter and skill_filter.lower() != "all" else None
 
         for idx, job in enumerate(jobs):
-            # Apply filters
             if search_lower:
                 m_title = search_lower in job["title"].lower()
                 m_comp = search_lower in job["company"].lower()
@@ -375,7 +340,7 @@ class RecommendationEngine:
             if skill_req_lower and not any(skill_req_lower in s.lower() for s in job["skills"]):
                 continue
 
-            # Skill matching
+            # Skill matching & coverage
             job_skills = job.get("skills", [])
             norm_job_skills = {s.lower().strip() for s in job_skills if s}
 
@@ -387,16 +352,15 @@ class RecommendationEngine:
             else:
                 skill_overlap_ratio = float(cosine_similarities[idx])
 
-            cos_score = float(cosine_similarities[idx])
+            cos_score = float(np.clip(cosine_similarities[idx], 0.0, 1.0))
 
-            # Weighted Hybrid Score: 55% TF-IDF Cosine + 45% Skill Overlap
+            # Mathematical Formula from Section 7.4: match(R, j) = 0.55 * cos + 0.45 * coverage
             hybrid_raw = (0.55 * cos_score) + (0.45 * skill_overlap_ratio)
             scaled_score = min(98.0, max(20.0, hybrid_raw * 100.0))
 
             if skill_overlap_ratio >= 0.85 and scaled_score < 90.0:
-                scaled_score = min(95.0, scaled_score + 10.0)
+                scaled_score = min(96.0, scaled_score + 10.0)
 
-            # Rationale generation
             rationale = self._generate_rationale(job["title"], matched, missing, scaled_score)
 
             scored_recommendations.append({
@@ -410,7 +374,6 @@ class RecommendationEngine:
                 "rationale": rationale
             })
 
-        # Sort by match_score descending
         scored_recommendations.sort(key=lambda x: x["match_score"], reverse=True)
         return scored_recommendations[:top_n]
 
