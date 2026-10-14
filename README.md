@@ -8,7 +8,7 @@
 [![License: Academic](https://img.shields.io/badge/License-Academic%20Submission-purple.svg)]()
 
 > **Academic Project Submission**  
-> **Authors:** Om Shelke (25102B2011), Aditya Vibhute (25102B2006)  
+> **Authors:** Om Shelke, Shams Tabrez Ahmed  
 > **Domain:** Artificial Intelligence, Machine Learning, Information Retrieval, Natural Language Processing  
 > **Paper:** `AI Resume Analyzer and Job Recommendation System A Machine Learning Approach.docx`
 
@@ -235,7 +235,7 @@ Ai-resume-analyzer/
 
 ## 8. Authors & Acknowledgments
 
-- **Om Shelke** — *25102B2011*
-- **Aditya Vibhute** — *25102B2006*
+- **Om Shelke**
+- **Shams Tabrez Ahmed**
 
-*Developed as an academic submission in Artificial Intelligence, Information Retrieval, and Natural Language Processing.*
+*Developed as an academic research project in Artificial Intelligence, Information Retrieval, and Natural Language Processing.*
