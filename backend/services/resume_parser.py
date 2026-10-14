@@ -149,12 +149,34 @@ class ResumeParser:
                 reader = pypdf.PdfReader(file_path)
                 pages_text = [page.extract_text() or "" for page in reader.pages]
                 text = "\n".join(pages_text).strip()
-                if text:
+                if text and len(text) > 40:
                     return text
             except Exception as e:
                 print(f"pypdf extraction failed: {e}")
 
+        # 4. Fallback to OCR via Tesseract and pdf2image for scanned documents
+        if not text or len(text.strip()) < 40:
+            ocr_text = self._extract_text_with_ocr(file_path)
+            if ocr_text and len(ocr_text.strip()) > 30:
+                return ocr_text
+
         return text
+
+    def _extract_text_with_ocr(self, file_path: str) -> str:
+        """OCR fallback for scanned or image-based PDFs using Tesseract."""
+        try:
+            import pdf2image
+            import pytesseract
+            images = pdf2image.convert_from_path(file_path, first_page=1, last_page=3)
+            extracted_pages = []
+            for img in images:
+                page_text = pytesseract.image_to_string(img)
+                if page_text and page_text.strip():
+                    extracted_pages.append(page_text.strip())
+            return "\n".join(extracted_pages).strip()
+        except Exception as e:
+            print(f"Tesseract OCR fallback skipped/failed: {e}")
+            return ""
 
     def _extract_text_from_docx(self, file_path: str) -> str:
         try:
@@ -352,7 +374,7 @@ class ResumeParser:
                                 inst = cleaned_prev
 
                     if not inst:
-                        inst = "University / College"
+                        inst = "Institution not detected"
 
                     # Clean degree formatting
                     clean_deg = degree_found.strip(" -|,:|()")
@@ -378,7 +400,7 @@ class ResumeParser:
                         years = year_pattern.findall(line)
                         rem = line.replace(deg, "").strip(" -|,:")
                         rem = re.sub(r"\b(20\d{2}|19\d{2})\b", "", rem).strip(" -|,:")
-                        inst = rem if len(rem) > 3 and any(ik in rem.lower() for ik in self.institution_keywords) else "University / Institute"
+                        inst = rem if len(rem) > 3 and any(ik in rem.lower() for ik in self.institution_keywords) else "Institution not detected"
                         edu_list.append({
                             "degree": deg,
                             "institution": inst,
@@ -500,19 +522,22 @@ class ResumeParser:
             i += 1
 
         if current_exp:
-            if not current_exp["title"]:
-                current_exp["title"] = "Software Professional"
+            if not current_exp["title"] and current_exp["responsibilities"]:
+                current_exp["title"] = "Professional Role"
             if not current_exp["company"]:
-                current_exp["company"] = "Tech Organization"
-            exp_list.append(current_exp)
+                current_exp["company"] = "Organization not specified"
+            if current_exp["title"] or current_exp["responsibilities"]:
+                exp_list.append(current_exp)
 
         # Final filtering pass
         cleaned_exp_list = []
         for exp in exp_list:
+            if not exp["title"] and not exp["responsibilities"]:
+                continue
             if not exp["title"]:
-                exp["title"] = "Software Professional"
+                exp["title"] = "Professional Role"
             if not exp["company"]:
-                exp["company"] = "Tech Organization"
+                exp["company"] = "Organization not specified"
             # Ensure degrees are never parsed as experience
             if any(re.search(pat, exp["title"], re.IGNORECASE) for pat, _ in self.degree_patterns):
                 continue
@@ -543,11 +568,16 @@ class ResumeParser:
             elif not is_bullet and len(line.split()) <= 10 and len(line) <= 80:
                 # Project Name Header
                 if current_proj:
+                    # Dynamically extract technologies if not explicitly specified
+                    if not current_proj.get("technologies") or current_proj["technologies"] == "Technologies not specified":
+                        extracted_tech = skill_extractor.extract_skills(f"{current_proj['name']} {current_proj['description']}")
+                        flat_tech = skill_extractor.get_all_flat_skills(extracted_tech)
+                        current_proj["technologies"] = ", ".join(flat_tech[:5]) if flat_tech else "Technologies not specified"
                     projects_list.append(current_proj)
                     current_proj = None
 
                 name = line
-                tech = "Python, Web Technologies"
+                tech = ""
                 if "|" in line:
                     parts = line.split("|", 1)
                     name = parts[0].strip()
@@ -560,7 +590,7 @@ class ResumeParser:
 
                 current_proj = {
                     "name": name.strip(" -:"),
-                    "technologies": tech,
+                    "technologies": tech or "Technologies not specified",
                     "description": ""
                 }
             elif current_proj:
@@ -573,6 +603,10 @@ class ResumeParser:
             i += 1
 
         if current_proj:
+            if not current_proj.get("technologies") or current_proj["technologies"] == "Technologies not specified":
+                extracted_tech = skill_extractor.extract_skills(f"{current_proj['name']} {current_proj['description']}")
+                flat_tech = skill_extractor.get_all_flat_skills(extracted_tech)
+                current_proj["technologies"] = ", ".join(flat_tech[:5]) if flat_tech else "Technologies not specified"
             projects_list.append(current_proj)
 
         return projects_list[:4]

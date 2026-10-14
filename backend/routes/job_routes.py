@@ -101,16 +101,19 @@ def match_job():
     resume_flat_skills = skill_extractor.get_all_flat_skills(extracted_resume_skills_dict)
 
     # Perform matching
+    use_dense_lsa = bool(data.get("use_dense_lsa", False) or data.get("model_type") == "semantic_lsa")
     match_result = job_matcher.match_resume_to_job(
         resume_text=resume_text,
         resume_skills=resume_flat_skills,
         job_title=job_title or "Target Job Role",
         job_description=job_description,
-        job_required_skills=job_skills
+        job_required_skills=job_skills,
+        use_dense_lsa=use_dense_lsa
     )
 
     return jsonify({
         "success": True,
         "match_result": match_result,
+        "model_used": "Dense LSA Semantic Hybrid" if use_dense_lsa else "Classical TF-IDF Hybrid (Paper Proposed)",
         "candidate_skills": resume_flat_skills
     })

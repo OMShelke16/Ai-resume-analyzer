@@ -1,4 +1,4 @@
-from typing import List, Set, Tuple
+from typing import List, Set, Tuple, Optional
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 from .tfidf_model import tfidf_engine
@@ -10,20 +10,56 @@ class SimilarityCalculator:
 
     def compute_cosine_similarity(self, text_a: str, text_b: str) -> float:
         """
-        Computes cosine similarity between two text strings using TF-IDF representation.
+        Computes cosine similarity between two text strings using the global fitted TF-IDF representation.
+        cos(A, B) = (A · B) / (||A|| × ||B||)
         Returns a score between 0.0 and 1.0.
         """
-        if not text_a or not text_b:
+        if not text_a or not text_b or not text_a.strip() or not text_b.strip():
             return 0.0
 
         try:
-            tfidf_matrix = tfidf_engine.fit_transform([text_a, text_b])
+            # Transform documents using global corpus vocabulary
+            tfidf_matrix = tfidf_engine.transform([text_a, text_b])
             sim_matrix = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])
             score = float(sim_matrix[0][0])
             return max(0.0, min(1.0, score))
         except Exception as e:
             print(f"Error computing cosine similarity: {e}")
             return 0.0
+
+    def compute_dense_semantic_similarity(self, text_a: str, text_b: str) -> float:
+        """
+        Computes dense semantic cosine similarity using Latent Semantic Analysis (LSA).
+        Overcomes surface-level vocabulary mismatch without relying on external cloud APIs.
+        """
+        if not text_a or not text_b or not text_a.strip() or not text_b.strip():
+            return 0.0
+
+        try:
+            dense_vectors = tfidf_engine.transform_dense([text_a, text_b])
+            sim_matrix = cosine_similarity(dense_vectors[0:1], dense_vectors[1:2])
+            score = float(sim_matrix[0][0])
+            return max(0.0, min(1.0, score))
+        except Exception as e:
+            print(f"Error computing dense semantic similarity: {e}")
+            return 0.0
+
+    def compute_skill_coverage(self, resume_skills: List[str], job_skills: List[str]) -> float:
+        """
+        Calculates skill coverage ratio:
+        coverage(R, j) = |S(R) ∩ S(j)| / |S(j)|
+        """
+        if not job_skills:
+            return 1.0
+
+        norm_resume = {s.lower().strip() for s in resume_skills if s}
+        norm_job = {s.lower().strip() for s in job_skills if s}
+
+        if not norm_job:
+            return 1.0
+
+        matched_count = len(norm_resume.intersection(norm_job))
+        return matched_count / len(norm_job)
 
     def compute_skill_jaccard(self, set_a: Set[str], set_b: Set[str]) -> float:
         """
@@ -46,46 +82,41 @@ class SimilarityCalculator:
         resume_text: str,
         job_text: str,
         resume_skills: List[str],
-        job_skills: List[str]
+        job_skills: List[str],
+        w1: Optional[float] = None,
+        w2: Optional[float] = None,
+        use_dense_lsa: bool = False
     ) -> Tuple[float, float, float]:
         """
-        Computes hybrid similarity combining:
-        1. TF-IDF Text Cosine Similarity (semantic & contextual match)
-        2. Direct Skill Overlap / Jaccard score (exact skill requirements)
+        Computes the hybrid match score defined in Section 7.4 of the research paper:
+        match(R, j) = w1 * cos(R, j) + w2 * coverage(R, j), with w1 = 0.55, w2 = 0.45
 
-        Returns: (overall_match_percentage, cosine_sim_pct, skill_overlap_pct)
+        Returns: (overall_match_percentage, cosine_sim_pct, skill_coverage_pct)
         """
-        # 1. Cosine similarity
-        cosine_sim = self.compute_cosine_similarity(resume_text, job_text)
-
-        # 2. Skill overlap calculation
-        norm_resume_skills = {s.lower().strip() for s in resume_skills if s}
-        norm_job_skills = {s.lower().strip() for s in job_skills if s}
-
-        if len(norm_job_skills) > 0:
-            matched_count = len(norm_resume_skills.intersection(norm_job_skills))
-            # Ratio of job requirements satisfied
-            skill_ratio = matched_count / len(norm_job_skills)
+        # 1. Similarity computation (classical TF-IDF or enhanced LSA dense vectors)
+        if use_dense_lsa:
+            text_sim = self.compute_dense_semantic_similarity(resume_text, job_text)
         else:
-            skill_ratio = cosine_sim
+            text_sim = self.compute_cosine_similarity(resume_text, job_text)
+
+        # 2. Skill coverage calculation
+        skill_coverage = self.compute_skill_coverage(resume_skills, job_skills)
 
         # 3. Weighted hybrid combination
-        alpha = self.weights.get("tfidf_cosine", 0.55)
-        beta = self.weights.get("skill_overlap", 0.45)
+        alpha = w1 if w1 is not None else self.weights.get("tfidf_cosine", 0.55)
+        beta = w2 if w2 is not None else self.weights.get("skill_overlap", 0.45)
 
-        hybrid_score = (alpha * cosine_sim) + (beta * skill_ratio)
+        hybrid_score = (alpha * text_sim) + (beta * skill_coverage)
 
-        # Non-linear scaling for better candidate calibration (prevents 0% for partial overlaps)
-        scaled_score = min(98.0, max(15.0, hybrid_score * 100.0))
-        
-        # If skills overlap is 100%, grant a high score boost
-        if skill_ratio >= 0.9 and scaled_score < 90.0:
+        # Score calibration (scaled 0-100)
+        scaled_score = min(99.0, max(15.0, hybrid_score * 100.0))
+        if skill_coverage >= 0.85 and scaled_score < 90.0:
             scaled_score = min(96.0, scaled_score + 10.0)
 
         return (
             round(scaled_score, 1),
-            round(cosine_sim * 100.0, 1),
-            round(skill_ratio * 100.0, 1)
+            round(text_sim * 100.0, 1),
+            round(skill_coverage * 100.0, 1)
         )
 
 # Global singleton
